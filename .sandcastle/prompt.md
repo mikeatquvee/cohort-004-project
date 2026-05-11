@@ -16,6 +16,8 @@ And here is the multi-phase plan for it:
 
 </plan>
 
+Each phase should be considered a single task.
+
 If there are no more tasks to complete, output <promise>NO MORE TASKS</promise>.
 
 # EXPLORATION
@@ -43,4 +45,4 @@ Make a git commit. The commit message must:
 
 # FINAL RULES
 
-ONLY WORK ON A SINGLE TASK.
+ONLY WORK ON A SINGLE TASK. If you receive a multi-phase plan, only work on a single phase of that plan.
