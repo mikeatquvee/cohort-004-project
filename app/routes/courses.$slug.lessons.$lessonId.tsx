@@ -719,6 +719,7 @@ function CommentsSection({
 }) {
   const fetcher = useFetcher({ key: `comments-${lessonId}` });
   const [replyingTo, setReplyingTo] = useState<number | null>(null);
+  const [commentFormKey, setCommentFormKey] = useState(0);
 
   const isInstructor =
     currentUserRole === UserRole.Instructor ||
@@ -797,9 +798,11 @@ function CommentsSection({
 
       {enrolled ? (
         <CommentForm
+          key={commentFormKey}
           intent="post-comment"
           fetcher={fetcher}
           placeholder="Ask a question or leave a comment..."
+          onCancel={() => setCommentFormKey((k) => k + 1)}
         />
       ) : (
         <p className="text-sm text-muted-foreground">
