@@ -26,7 +26,15 @@ import {
   getBestAttempt,
 } from "~/services/quizService";
 import { computeResult } from "~/services/quizScoringService";
-import { LessonProgressStatus } from "~/db/schema";
+import {
+  getCommentsForLesson,
+  createComment,
+  deleteComment,
+  getCommentById,
+  type CommentWithAuthor,
+} from "~/services/commentService";
+import { getUserById } from "~/services/userService";
+import { LessonProgressStatus, UserRole } from "~/db/schema";
 import { Button } from "~/components/ui/button";
 import { Card, CardContent } from "~/components/ui/card";
 import {
@@ -40,8 +48,10 @@ import {
   Github,
   HelpCircle,
   MapPin,
+  MessageSquare,
   PlayCircle,
   ShieldAlert,
+  Trash2,
   XCircle,
   Trophy,
   RotateCcw,
@@ -248,6 +258,9 @@ export async function loader({ params, request }: Route.LoaderArgs) {
     }
   }
 
+  const comments = currentUserId ? getCommentsForLesson(lessonId) : [];
+  const currentUser = currentUserId ? getUserById(currentUserId) : null;
+
   return {
     course: {
       id: courseWithDetails.id,
@@ -271,6 +284,7 @@ export async function loader({ params, request }: Route.LoaderArgs) {
     lessonStatus,
     enrolled,
     currentUserId,
+    currentUserRole: currentUser?.role ?? null,
     prevLesson,
     nextLesson,
     quiz,
@@ -281,6 +295,7 @@ export async function loader({ params, request }: Route.LoaderArgs) {
     pppBlocked,
     pppBlockedCountry,
     pppPurchaseCountry,
+    comments,
   };
 }
 
@@ -302,6 +317,71 @@ export async function action({ params, request }: Route.ActionArgs) {
 
   if (intent === "mark-complete") {
     markLessonComplete(currentUserId, lessonId);
+    return { success: true };
+  }
+
+  if (intent === "post-comment") {
+    const body = String(formData.get("body") ?? "").trim();
+    if (!body || body.length > 1000) {
+      throw data("Comment must be between 1 and 1000 characters", {
+        status: 400,
+      });
+    }
+
+    const enrolled = isUserEnrolled(currentUserId, course.id);
+    if (!enrolled) {
+      throw data("You must be enrolled to comment", { status: 403 });
+    }
+
+    createComment(lessonId, currentUserId, body, null);
+    return { success: true };
+  }
+
+  if (intent === "reply-comment") {
+    const body = String(formData.get("body") ?? "").trim();
+    const parentId = Number(formData.get("parentId"));
+    if (!body || body.length > 1000) {
+      throw data("Reply must be between 1 and 1000 characters", {
+        status: 400,
+      });
+    }
+    if (isNaN(parentId)) {
+      throw data("Invalid parent comment", { status: 400 });
+    }
+
+    const currentUser = getUserById(currentUserId);
+    if (currentUser?.role !== UserRole.Instructor && currentUser?.role !== UserRole.Admin) {
+      throw data("Only instructors can reply to comments", { status: 403 });
+    }
+
+    const parent = getCommentById(parentId);
+    if (!parent || parent.parentId !== null) {
+      throw data("Can only reply to top-level comments", { status: 400 });
+    }
+
+    createComment(lessonId, currentUserId, body, parentId);
+    return { success: true };
+  }
+
+  if (intent === "delete-comment") {
+    const commentId = Number(formData.get("commentId"));
+    if (isNaN(commentId)) {
+      throw data("Invalid comment ID", { status: 400 });
+    }
+
+    const currentUser = getUserById(currentUserId);
+    const comment = getCommentById(commentId);
+    if (!comment) {
+      throw data("Comment not found", { status: 404 });
+    }
+
+    const isAdmin = currentUser?.role === UserRole.Admin;
+    const isOwner = comment.userId === currentUserId;
+    if (!isAdmin && !isOwner) {
+      throw data("Not authorized to delete this comment", { status: 403 });
+    }
+
+    deleteComment(commentId);
     return { success: true };
   }
 
@@ -372,6 +452,7 @@ export default function LessonViewer({ loaderData }: Route.ComponentProps) {
     lessonStatus,
     enrolled,
     currentUserId,
+    currentUserRole,
     prevLesson,
     nextLesson,
     quiz,
@@ -382,6 +463,7 @@ export default function LessonViewer({ loaderData }: Route.ComponentProps) {
     pppBlocked,
     pppBlockedCountry,
     pppPurchaseCountry,
+    comments,
   } = loaderData;
   const [autoplay, toggleAutoplay] = useAutoplay();
   const fetcher = useFetcher({ key: `mark-complete-${lesson.id}` });
@@ -565,6 +647,17 @@ export default function LessonViewer({ loaderData }: Route.ComponentProps) {
                       </Button>
                     </Link>
                   )}
+                  {prevLesson && (
+                    <Link
+                      to={`/courses/${course.slug}/lessons/${prevLesson.id}`}
+                      className="ml-auto"
+                    >
+                      <Button variant="outline" size="sm">
+                        <ChevronLeft className="mr-1 size-4" />
+                        Back to: {prevLesson.title}
+                      </Button>
+                    </Link>
+                  )}
                 </div>
               ) : nextLesson ? (
                 <fetcher.Form method="post">
@@ -592,56 +685,256 @@ export default function LessonViewer({ loaderData }: Route.ComponentProps) {
             </div>
           )}
 
-          {/* Prev/Next Navigation */}
-          <div className="flex items-center justify-between border-t pt-6">
-            {prevLesson ? (
-              <Link
-                to={`/courses/${course.slug}/lessons/${prevLesson.id}`}
-                className="flex items-center gap-2 text-sm hover:text-foreground text-muted-foreground"
-              >
-                <ChevronLeft className="size-4" />
-                <div>
-                  <div className="text-xs text-muted-foreground">Previous</div>
-                  <div className="font-medium text-foreground">
-                    {prevLesson.title}
-                  </div>
-                </div>
-              </Link>
-            ) : (
-              <div />
-            )}
-
-            {nextLesson ? (
-              <Link
-                to={`/courses/${course.slug}/lessons/${nextLesson.id}`}
-                className="flex items-center gap-2 text-right text-sm hover:text-foreground text-muted-foreground"
-              >
-                <div>
-                  <div className="text-xs text-muted-foreground">Next</div>
-                  <div className="font-medium text-foreground">
-                    {nextLesson.title}
-                  </div>
-                </div>
-                <ChevronRight className="size-4" />
-              </Link>
-            ) : (
-              <Link
-                to={`/courses/${course.slug}`}
-                className="flex items-center gap-2 text-sm text-muted-foreground hover:text-foreground"
-              >
-                <div>
-                  <div className="text-xs text-muted-foreground">Back to</div>
-                  <div className="font-medium text-foreground">
-                    {course.title}
-                  </div>
-                </div>
-                <ChevronRight className="size-4" />
-              </Link>
-            )}
-          </div>
+          {/* Comments Section */}
+          {currentUserId && (
+            <CommentsSection
+              lessonId={lesson.id}
+              courseId={course.id}
+              comments={comments}
+              currentUserId={currentUserId}
+              currentUserRole={currentUserRole}
+              enrolled={enrolled}
+            />
+          )}
         </div>
       </div>
     </div>
+  );
+}
+
+function CommentsSection({
+  lessonId,
+  courseId,
+  comments,
+  currentUserId,
+  currentUserRole,
+  enrolled,
+}: {
+  lessonId: number;
+  courseId: number;
+  comments: CommentWithAuthor[];
+  currentUserId: number;
+  currentUserRole: UserRole | null;
+  enrolled: boolean;
+}) {
+  const fetcher = useFetcher({ key: `comments-${lessonId}` });
+  const [replyingTo, setReplyingTo] = useState<number | null>(null);
+
+  const isInstructor =
+    currentUserRole === UserRole.Instructor ||
+    currentUserRole === UserRole.Admin;
+
+  const topLevel = comments.filter((c) => c.parentId === null);
+
+  return (
+    <div className="border-t pt-6">
+      <h2 className="mb-6 flex items-center gap-2 text-lg font-semibold">
+        <MessageSquare className="size-5" />
+        Discussion
+        {comments.length > 0 && (
+          <span className="text-sm font-normal text-muted-foreground">
+            ({comments.length})
+          </span>
+        )}
+      </h2>
+
+      {topLevel.length === 0 && (
+        <p className="mb-6 text-sm text-muted-foreground">
+          No comments yet. Be the first to start the discussion.
+        </p>
+      )}
+
+      <div className="mb-8 space-y-6">
+        {topLevel.map((comment) => {
+          const replies = comments.filter((c) => c.parentId === comment.id);
+          const isOwnComment = comment.userId === currentUserId;
+
+          return (
+            <div key={comment.id}>
+              <CommentItem
+                comment={comment}
+                canDelete={
+                  isOwnComment || currentUserRole === UserRole.Admin
+                }
+                fetcher={fetcher}
+              />
+
+              {replies.map((reply) => (
+                <div key={reply.id} className="ml-10 mt-3">
+                  <CommentItem
+                    comment={reply}
+                    canDelete={currentUserRole === UserRole.Admin}
+                    fetcher={fetcher}
+                    isInstructorReply
+                  />
+                </div>
+              ))}
+
+              {isInstructor && replyingTo !== comment.id && (
+                <button
+                  className="ml-10 mt-2 text-xs text-muted-foreground hover:text-foreground"
+                  onClick={() => setReplyingTo(comment.id)}
+                >
+                  Reply as instructor
+                </button>
+              )}
+
+              {isInstructor && replyingTo === comment.id && (
+                <div className="ml-10 mt-3">
+                  <CommentForm
+                    intent="reply-comment"
+                    parentId={comment.id}
+                    fetcher={fetcher}
+                    onCancel={() => setReplyingTo(null)}
+                    placeholder="Write an instructor reply..."
+                  />
+                </div>
+              )}
+            </div>
+          );
+        })}
+      </div>
+
+      {enrolled ? (
+        <CommentForm
+          intent="post-comment"
+          fetcher={fetcher}
+          placeholder="Ask a question or leave a comment..."
+        />
+      ) : (
+        <p className="text-sm text-muted-foreground">
+          Enroll in this course to join the discussion.
+        </p>
+      )}
+    </div>
+  );
+}
+
+function CommentItem({
+  comment,
+  canDelete,
+  fetcher,
+  isInstructorReply = false,
+}: {
+  comment: CommentWithAuthor;
+  canDelete: boolean;
+  fetcher: ReturnType<typeof useFetcher>;
+  isInstructorReply?: boolean;
+}) {
+  return (
+    <div
+      className={cn(
+        "rounded-lg p-4",
+        isInstructorReply
+          ? "border border-primary/20 bg-primary/5"
+          : "bg-muted/40"
+      )}
+    >
+      <div className="mb-2 flex items-start justify-between gap-2">
+        <div className="flex items-center gap-2">
+          {comment.authorAvatarUrl ? (
+            <img
+              src={comment.authorAvatarUrl}
+              alt={comment.authorName}
+              className="size-7 rounded-full object-cover"
+            />
+          ) : (
+            <div className="flex size-7 items-center justify-center rounded-full bg-muted text-xs font-medium">
+              {comment.authorName[0]}
+            </div>
+          )}
+          <span className="text-sm font-medium">{comment.authorName}</span>
+          {isInstructorReply && (
+            <span className="rounded-full bg-primary/10 px-2 py-0.5 text-xs font-medium text-primary">
+              Instructor
+            </span>
+          )}
+          <span className="text-xs text-muted-foreground">
+            {new Date(comment.createdAt).toLocaleDateString("en-US", {
+              month: "short",
+              day: "numeric",
+              year: "numeric",
+            })}
+          </span>
+        </div>
+        {canDelete && (
+          <fetcher.Form method="post">
+            <input type="hidden" name="intent" value="delete-comment" />
+            <input type="hidden" name="commentId" value={comment.id} />
+            <button
+              type="submit"
+              className="text-muted-foreground hover:text-destructive"
+              title="Delete comment"
+            >
+              <Trash2 className="size-3.5" />
+            </button>
+          </fetcher.Form>
+        )}
+      </div>
+      <p className="text-sm leading-relaxed">{comment.body}</p>
+    </div>
+  );
+}
+
+function CommentForm({
+  intent,
+  parentId,
+  fetcher,
+  placeholder,
+  onCancel,
+}: {
+  intent: "post-comment" | "reply-comment";
+  parentId?: number;
+  fetcher: ReturnType<typeof useFetcher>;
+  placeholder: string;
+  onCancel?: () => void;
+}) {
+  const [body, setBody] = useState("");
+  const isSubmitting = fetcher.state !== "idle";
+
+  useEffect(() => {
+    const d = fetcher.data as { success?: boolean } | undefined;
+    if (d?.success) {
+      setBody("");
+      onCancel?.();
+    }
+  }, [fetcher.data]);
+
+  return (
+    <fetcher.Form
+      method="post"
+      onSubmit={() => {}}
+      className="space-y-2"
+    >
+      <input type="hidden" name="intent" value={intent} />
+      {parentId !== undefined && (
+        <input type="hidden" name="parentId" value={parentId} />
+      )}
+      <textarea
+        name="body"
+        value={body}
+        onChange={(e) => setBody(e.target.value)}
+        placeholder={placeholder}
+        maxLength={1000}
+        rows={3}
+        className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-ring resize-none"
+      />
+      <div className="flex items-center justify-between">
+        <span className="text-xs text-muted-foreground">
+          {body.length}/1000
+        </span>
+        <div className="flex gap-2">
+          {onCancel && (
+            <Button type="button" variant="ghost" size="sm" onClick={onCancel}>
+              Cancel
+            </Button>
+          )}
+          <Button type="submit" size="sm" disabled={!body.trim() || isSubmitting}>
+            {isSubmitting ? "Posting..." : "Post"}
+          </Button>
+        </div>
+      </div>
+    </fetcher.Form>
   );
 }
 
