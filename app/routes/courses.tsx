@@ -15,6 +15,8 @@ import { getUserEnrolledCourses } from "~/services/enrollmentService";
 import { calculateProgress, getCompletedLessonCount } from "~/services/progressService";
 import { resolveCountry } from "~/lib/country.server";
 import { calculatePppPrice } from "~/lib/ppp";
+import { getCourseRatingSummariesForCourses } from "~/services/reviewService";
+import { StarRatingDisplay } from "~/components/star-rating";
 
 export function meta() {
   return [
@@ -55,17 +57,23 @@ export async function loader({ request }: Route.LoaderArgs) {
     }
   }
 
+  const courseIds = courses.map((c) => c.id);
+  const ratingSummaries = getCourseRatingSummariesForCourses(courseIds);
+
   const coursesWithLessonCount = courses.map((course) => {
     const userProgress = progressMap.get(course.id);
     const pppPrice = course.pppEnabled
       ? calculatePppPrice(course.price, country)
       : course.price;
+    const ratingInfo = ratingSummaries.get(course.id) ?? { averageRating: null, reviewCount: 0 };
     return {
       ...course,
       lessonCount: getLessonCountForCourse(course.id),
       progress: userProgress?.progress ?? null,
       completedLessons: userProgress?.completedLessons ?? null,
       pppPrice,
+      averageRating: ratingInfo.averageRating,
+      reviewCount: ratingInfo.reviewCount,
     };
   });
 
@@ -224,6 +232,11 @@ export default function CourseCatalog({ loaderData }: Route.ComponentProps) {
                         style={{ width: `${course.progress}%` }}
                       />
                     </div>
+                  </CardContent>
+                )}
+                {course.averageRating !== null && (
+                  <CardContent className="pt-0">
+                    <StarRatingDisplay rating={course.averageRating} reviewCount={course.reviewCount} />
                   </CardContent>
                 )}
                 <CardFooter className="flex items-center justify-between text-xs text-muted-foreground">

@@ -42,6 +42,8 @@ import { formatDuration, formatPrice } from "~/lib/utils";
 import { renderMarkdown } from "~/lib/markdown.server";
 import { resolveCountry } from "~/lib/country.server";
 import { calculatePppPrice, getCountryTierInfo } from "~/lib/ppp";
+import { getCourseRatingSummary, getUserReviewForCourse } from "~/services/reviewService";
+import { StarRatingDisplay, StarRatingInput } from "~/components/star-rating";
 
 export function meta({ data: loaderData }: Route.MetaArgs) {
   const title = loaderData?.course?.title ?? "Course";
@@ -102,6 +104,9 @@ export async function loader({ params, request }: Route.LoaderArgs) {
     : courseWithDetails.price;
   const tierInfo = getCountryTierInfo(country);
 
+  const ratingSummary = getCourseRatingSummary(course.id);
+  const userReview = currentUserId ? getUserReviewForCourse(currentUserId, course.id) : null;
+
   return {
     course: courseWithDetails,
     salesCopyHtml,
@@ -113,6 +118,8 @@ export async function loader({ params, request }: Route.LoaderArgs) {
     currentUserId,
     pppPrice,
     tierInfo,
+    ratingSummary,
+    userReview,
   };
 }
 
@@ -181,6 +188,8 @@ export default function CourseDetail({ loaderData }: Route.ComponentProps) {
     currentUserId,
     pppPrice,
     tierInfo,
+    ratingSummary,
+    userReview,
   } = loaderData;
   const isInstructor = currentUserId === course.instructorId;
   const [searchParams, setSearchParams] = useSearchParams();
@@ -301,7 +310,7 @@ export default function CourseDetail({ loaderData }: Route.ComponentProps) {
         <p className="mb-4 text-lg text-muted-foreground">
           {course.description}
         </p>
-        <div className="flex items-center gap-4 text-sm text-muted-foreground">
+        <div className="flex flex-wrap items-center gap-4 text-sm text-muted-foreground">
           <span className="flex items-center gap-1.5">
             <UserAvatar
               name={course.instructorName}
@@ -319,6 +328,9 @@ export default function CourseDetail({ loaderData }: Route.ComponentProps) {
               <Clock className="size-4" />
               {formatDuration(totalDuration, true, false, false)} total
             </span>
+          )}
+          {ratingSummary.averageRating !== null && (
+            <StarRatingDisplay rating={ratingSummary.averageRating} reviewCount={ratingSummary.reviewCount} size="md" />
           )}
         </div>
       </div>
@@ -413,6 +425,13 @@ export default function CourseDetail({ loaderData }: Route.ComponentProps) {
                       Buy More Seats
                     </Button>
                   </Link>
+                  <div className="border-t pt-3">
+                    <p className="mb-2 text-xs font-medium text-muted-foreground">Rate this course</p>
+                    <StarRatingInput
+                      courseId={course.id}
+                      initialRating={userReview?.rating ?? null}
+                    />
+                  </div>
                 </>
               ) : (
                 enrollButton
